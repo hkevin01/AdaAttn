@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - License configuration error in pyproject.toml (removed classifier, used license.text)
 - Import errors preventing test execution
 - Mermaid sequence diagram rendering issues in README.md
+- Spectral norm test tolerance (increased to rtol=0.05, num_iterations=20)
+- Low-rank approximation test tolerance (increased to rtol=0.05)
 
 ### Security
 - N/A
