@@ -148,15 +148,15 @@ where U ∈ ℝ^(N×k), Σ ∈ ℝ^(k×k), V^T ∈ ℝ^(k×N), and k is the adap
 def select_rank(Q, K, threshold=0.95):
     # Compute attention scores (without softmax for efficiency)
     scores = Q @ K.T / sqrt(d)
-    
+
     # Estimate effective rank via singular value decay
     S = svd_vals(scores)  # Fast approximation
     S_normalized = S / S.sum()
-    
+
     # Cumulative energy criterion
     cumsum = cumsum(S_normalized ** 2)
     effective_rank = argmax(cumsum >= threshold)
-    
+
     # Decision rule
     if effective_rank < 0.5 * N:
         return effective_rank  # Use low-rank
@@ -190,12 +190,12 @@ def select_rank(Q, K, threshold=0.95):
 
 **Precision Hierarchy**:
 
-| **Precision** | **Bits** | **Mantissa** | **Exponent** | **Range** | **TFLOPS (A100)** | **Use Case** |
-|---------------|----------|--------------|--------------|-----------|-------------------|--------------|
-| FP32 | 32 | 23 | 8 | ±3.4e38 | 19.5 | Accumulation, critical ops |
-| BF16 | 16 | 7 | 8 | ±3.4e38 | 312 | General compute, wide range |
-| FP16 | 16 | 10 | 5 | ±65504 | 312 | General compute, high precision |
-| FP8 (E4M3) | 8 | 3 | 4 | ±448 | 624* | Non-critical matmul |
+| **Precision** | **Bits** | **Mantissa** | **Exponent** | **Range** | **TFLOPS (A100)** | **Use Case**                    |
+| ------------- | -------- | ------------ | ------------ | --------- | ----------------- | ------------------------------- |
+| FP32          | 32       | 23           | 8            | ±3.4e38   | 19.5              | Accumulation, critical ops      |
+| BF16          | 16       | 7            | 8            | ±3.4e38   | 312               | General compute, wide range     |
+| FP16          | 16       | 10           | 5            | ±65504    | 312               | General compute, high precision |
+| FP8 (E4M3)    | 8        | 3            | 4            | ±448      | 624*              | Non-critical matmul             |
 
 *FP8 performance on H100
 
@@ -207,11 +207,11 @@ def select_precision(scores, config):
     max_val = scores.abs().max()
     min_val = scores[scores != 0].abs().min()
     dynamic_range = max_val / (min_val + 1e-10)
-    
+
     # Compute attention entropy (predictability)
     attn_weights = softmax(scores, dim=-1)
     entropy = -(attn_weights * log(attn_weights + 1e-10)).sum(dim=-1).mean()
-    
+
     # Precision decision rules
     if dynamic_range > 1e4 or entropy < 1.0:
         compute_prec = FP32  # High precision needed
@@ -225,7 +225,7 @@ def select_precision(scores, config):
     else:
         compute_prec = FP8   # Low precision sufficient
         accum_prec = FP16
-    
+
     return compute_prec, accum_prec
 ```
 
@@ -278,11 +278,11 @@ graph LR
 ```mermaid
 %%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#1f2937','primaryTextColor':'#e5e7eb','primaryBorderColor':'#374151','lineColor':'#60a5fa','secondaryColor':'#374151','tertiaryColor':'#1f2937','background':'#111827','mainBkg':'#1f2937','secondBkg':'#374151','textColor':'#e5e7eb','fontSize':'14px'}}}%%
 sequenceDiagram
-    participant HBM as HBM<br/>(Slow: 2TB/s)
-    participant SRAM as Shared Memory<br/>(Fast: 20TB/s)
-    participant TC as Tensor Cores<br/>(312 TFLOPS)
+    participant HBM as HBM (Slow: 2TB/s)
+    participant SRAM as Shared Memory (Fast: 20TB/s)
+    participant TC as Tensor Cores (312 TFLOPS)
 
-    Note over HBM,TC: 🔷 Traditional Attention (5 kernel launches)
+    Note over HBM,TC: Traditional Attention (5 kernel launches)
     HBM->>SRAM: Load Q, K
     SRAM->>TC: Compute QK^T
     TC->>HBM: Store scores
@@ -293,7 +293,7 @@ sequenceDiagram
     SRAM->>TC: Compute Attn@V
     TC->>HBM: Store output
 
-    Note over HBM,TC: 🚀 AdaAttn Fused (1 kernel launch)
+    Note over HBM,TC: AdaAttn Fused (1 kernel launch)
     HBM->>SRAM: Load Q, K, V tiles
     SRAM->>TC: QK^T (tiled)
     TC->>SRAM: Keep in SRAM
@@ -301,10 +301,6 @@ sequenceDiagram
     TC->>SRAM: Keep in SRAM
     SRAM->>TC: Attn@V (tiled)
     TC->>HBM: Store output only
-
-    style HBM fill:#1f2937,stroke:#ef4444,stroke-width:3px,color:#e5e7eb
-    style SRAM fill:#1f2937,stroke:#10b981,stroke-width:3px,color:#e5e7eb
-    style TC fill:#1f2937,stroke:#60a5fa,stroke-width:3px,color:#e5e7eb
 ```
 
 **Tiling Strategy**:
@@ -346,38 +342,38 @@ SRAM Usage: 48KB per SM       (Careful tile size selection)
 
 ### Core Technologies
 
-| **Technology** | **Version** | **Purpose** | **Why Chosen** |
-|----------------|-------------|-------------|----------------|
-| **Python** | 3.8+ | High-level interface | Industry standard for ML, excellent ecosystem |
-| **PyTorch** | 2.0+ | Deep learning framework | Best GPU support, dynamic graphs, strong community |
-| **CUDA** | 12.0+ | GPU kernel programming | Direct hardware access, maximum performance |
-| **C++** | 17+ | Performance-critical code | Zero-overhead abstractions, template metaprogramming |
-| **Cutlass** | 3.x | Optimized GEMM templates | NVIDIA-optimized, tensor core support |
-| **Triton** | 2.x | High-level GPU programming | Faster prototyping, automatic optimization |
-| **pybind11** | 2.11+ | Python-C++ bindings | Clean API, automatic type conversion |
-| **pytest** | 7.x+ | Testing framework | Comprehensive, fixture support, parametrization |
-| **NumPy** | 1.23+ | Numerical reference | CPU baseline, validation |
+| **Technology** | **Version** | **Purpose**                | **Why Chosen**                                       |
+| -------------- | ----------- | -------------------------- | ---------------------------------------------------- |
+| **Python**     | 3.8+        | High-level interface       | Industry standard for ML, excellent ecosystem        |
+| **PyTorch**    | 2.0+        | Deep learning framework    | Best GPU support, dynamic graphs, strong community   |
+| **CUDA**       | 12.0+       | GPU kernel programming     | Direct hardware access, maximum performance          |
+| **C++**        | 17+         | Performance-critical code  | Zero-overhead abstractions, template metaprogramming |
+| **Cutlass**    | 3.x         | Optimized GEMM templates   | NVIDIA-optimized, tensor core support                |
+| **Triton**     | 2.x         | High-level GPU programming | Faster prototyping, automatic optimization           |
+| **pybind11**   | 2.11+       | Python-C++ bindings        | Clean API, automatic type conversion                 |
+| **pytest**     | 7.x+        | Testing framework          | Comprehensive, fixture support, parametrization      |
+| **NumPy**      | 1.23+       | Numerical reference        | CPU baseline, validation                             |
 
 ### Development Tools
 
-| **Tool** | **Purpose** | **Why Chosen** |
-|----------|-------------|----------------|
-| **NVIDIA Nsight** | GPU profiling | Official NVIDIA profiler, detailed metrics |
-| **PyTorch Profiler** | Python-level profiling | Integration with PyTorch, timeline view |
-| **Docker** | Containerization | Reproducible environment, CUDA isolation |
-| **Black** | Code formatting | Consistent style, automatic |
-| **pylint** | Linting | Code quality, style enforcement |
-| **mypy** | Type checking | Catch type errors early |
+| **Tool**             | **Purpose**            | **Why Chosen**                             |
+| -------------------- | ---------------------- | ------------------------------------------ |
+| **NVIDIA Nsight**    | GPU profiling          | Official NVIDIA profiler, detailed metrics |
+| **PyTorch Profiler** | Python-level profiling | Integration with PyTorch, timeline view    |
+| **Docker**           | Containerization       | Reproducible environment, CUDA isolation   |
+| **Black**            | Code formatting        | Consistent style, automatic                |
+| **pylint**           | Linting                | Code quality, style enforcement            |
+| **mypy**             | Type checking          | Catch type errors early                    |
 
 ### Hardware Requirements
 
-| **Component** | **Minimum** | **Recommended** | **Rationale** |
-|---------------|-------------|-----------------|---------------|
-| **GPU** | A100 40GB | A100 80GB / H100 | Tensor cores, FP8 support (H100) |
-| **CUDA Compute** | 8.0 (A100) | 9.0 (H100) | Required for latest features |
-| **VRAM** | 40GB | 80GB | Large batch sizes, long sequences |
-| **CPU RAM** | 64GB | 128GB | Data loading, preprocessing |
-| **Storage** | 500GB SSD | 1TB NVMe | Fast data loading, checkpoints |
+| **Component**    | **Minimum** | **Recommended**  | **Rationale**                     |
+| ---------------- | ----------- | ---------------- | --------------------------------- |
+| **GPU**          | A100 40GB   | A100 80GB / H100 | Tensor cores, FP8 support (H100)  |
+| **CUDA Compute** | 8.0 (A100)  | 9.0 (H100)       | Required for latest features      |
+| **VRAM**         | 40GB        | 80GB             | Large batch sizes, long sequences |
+| **CPU RAM**      | 64GB        | 128GB            | Data loading, preprocessing       |
+| **Storage**      | 500GB SSD   | 1TB NVMe         | Fast data loading, checkpoints    |
 
 ---
 
@@ -385,13 +381,13 @@ SRAM Usage: 48KB per SM       (Careful tile size selection)
 
 ### Benchmark Comparisons
 
-| **Metric** | **PyTorch SDPA** | **FlashAttention v2** | **AdaAttn (Expected)** | **Improvement** |
-|------------|------------------|------------------------|------------------------|-----------------|
-| **Peak Memory (8K seq)** | 24.5 GB | 8.2 GB | **5.8 GB** | **1.4x vs FA2** |
-| **Throughput (tok/s)** | 1,240 | 3,850 | **5,200** | **1.35x vs FA2** |
-| **Latency (ms/iter)** | 125 | 42 | **29** | **1.45x vs FA2** |
-| **FP16 Accuracy (PPL)** | 12.45 | 12.47 | **12.48** | **0.08% degradation** |
-| **GPU Utilization** | 58% | 78% | **87%** | **+9 pp vs FA2** |
+| **Metric**               | **PyTorch SDPA** | **FlashAttention v2** | **AdaAttn (Expected)** | **Improvement**       |
+| ------------------------ | ---------------- | --------------------- | ---------------------- | --------------------- |
+| **Peak Memory (8K seq)** | 24.5 GB          | 8.2 GB                | **5.8 GB**             | **1.4x vs FA2**       |
+| **Throughput (tok/s)**   | 1,240            | 3,850                 | **5,200**              | **1.35x vs FA2**      |
+| **Latency (ms/iter)**    | 125              | 42                    | **29**                 | **1.45x vs FA2**      |
+| **FP16 Accuracy (PPL)**  | 12.45            | 12.47                 | **12.48**              | **0.08% degradation** |
+| **GPU Utilization**      | 58%              | 78%                   | **87%**                | **+9 pp vs FA2**      |
 
 *Benchmarks: GPT-2 Medium, batch=16, seq_len=8192, A100 80GB*
 
@@ -669,11 +665,11 @@ gantt
 
 ### Why Publishable?
 
-✅ **Clear novelty**: No prior work on joint rank-precision adaptation  
-✅ **Significant impact**: 1.5-2x speedup is publication-worthy  
-✅ **Rigorous evaluation**: Comprehensive benchmarks + ablations  
-✅ **Reproducibility**: Open-source implementation  
-✅ **Theoretical grounding**: Error analysis + convergence proofs  
+✅ **Clear novelty**: No prior work on joint rank-precision adaptation
+✅ **Significant impact**: 1.5-2x speedup is publication-worthy
+✅ **Rigorous evaluation**: Comprehensive benchmarks + ablations
+✅ **Reproducibility**: Open-source implementation
+✅ **Theoretical grounding**: Error analysis + convergence proofs
 
 ---
 
@@ -794,10 +790,10 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 
 for batch in dataloader:
     input_ids = batch["input_ids"].cuda()
-    
+
     logits = model(input_ids)
     loss = F.cross_entropy(logits.view(-1, vocab_size), input_ids.view(-1))
-    
+
     loss.backward()
     optimizer.step()
     optimizer.zero_grad()

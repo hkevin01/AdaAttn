@@ -7,9 +7,9 @@ optimized for attention computation.
 
 from adaattn.linalg.entropy import (
     attention_entropy,
-    entropy_based_rank,
+    entropy_based_rank_hint,
+    estimate_entropy,
     normalized_entropy,
-    softmax_entropy,
 )
 from adaattn.linalg.low_rank import (
     estimate_effective_rank,
@@ -43,9 +43,9 @@ from adaattn.linalg.utils import (
 __all__ = [
     # Entropy
     "attention_entropy",
-    "entropy_based_rank",
+    "entropy_based_rank_hint",
+    "estimate_entropy",
     "normalized_entropy",
-    "softmax_entropy",
     # Low-rank
     "estimate_effective_rank",
     "low_rank_approx",
