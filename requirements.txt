@@ -1,0 +1,27 @@
+# Core dependencies
+torch>=2.0.0
+numpy>=1.23.0
+
+# Optional GPU optimizations
+flash-attn>=2.0.0; platform_machine=="x86_64"  # FlashAttention v2
+triton>=2.0.0; platform_machine=="x86_64"      # Triton GPU kernels
+
+# Development dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-xdist>=3.0.0
+black>=22.0.0
+isort>=5.10.0
+mypy>=1.0.0
+pre-commit>=2.20.0
+
+# Benchmarking
+psutil>=5.9.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
+pandas>=1.4.0
+
+# Documentation
+sphinx>=4.5.0
+sphinx-rtd-theme>=1.0.0
+myst-parser>=0.18.0

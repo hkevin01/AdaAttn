@@ -2,27 +2,34 @@
 Benchmark script for comparing attention implementations.
 
 This script benchmarks:
-- Dense attention (baseline)
+- PyTorch baseline attention
+- FlashAttention v2 (if available)
 - Adaptive precision attention
 - Adaptive rank attention
-- PyTorch SDPA (if available)
+- Full AdaAttn implementation
 
 Measures:
 - Forward pass time
 - Backward pass time
 - Memory usage
 - Throughput (tokens/sec)
+- Numerical accuracy
 """
 
 import argparse
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+import warnings
 
 import torch
 import torch.nn.functional as F
+import numpy as np
 
+from benchmarks.pytorch_attention.baseline import PyTorchAttentionBaseline
+from benchmarks.flashattention.flash_attention import FlashAttentionBaseline
 from adaattn.attention.adaptive_precision import AdaptivePrecisionAttention
 from adaattn.attention.adaptive_rank import AdaptiveRankAttention
+from adaattn.attention.adaattn import AdaAttention
 from adaattn.attention.dense import DenseAttention
 
 
