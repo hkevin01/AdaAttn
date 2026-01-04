@@ -25,6 +25,8 @@ Traditional attention mechanisms use fixed precision (typically FP16/BF16) and d
 2. **Adaptive Rank**: Intelligently approximating attention matrices using low-rank factorization when beneficial, transitioning between dense → low-rank → sparse representations
 3. **Fused GPU Kernels**: FlashAttention-inspired kernel fusion that minimizes memory transfers and maximizes hardware utilization
 
+This represents a shift from the "brute force scaling" era to **smart, hardware-aware architectural design** that achieves better efficiency through algorithmic innovation rather than just throwing more compute at the problem.
+
 ---
 
 ## 🧠 Why AdaAttn? The Problem Statement
@@ -828,6 +830,7 @@ plot_benchmark_results(results, save_path="results/figures/benchmark.png")
 - **[Implementation Plans](memory-bank/implementation-plans/)**: Step-by-step development guide
 - **[API Reference](docs/api/)**: Complete API documentation
 - **[Benchmarks](docs/benchmarks.md)**: Performance evaluation results
+- **[Future Work](docs/future_work/)**: mHC integration and other advanced concepts
 - **[Contributing Guide](CONTRIBUTING.md)**: How to contribute to the project
 
 ---

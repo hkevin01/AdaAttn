@@ -10,6 +10,7 @@
 2. Can we **change precision mid-kernel** without hurting stability?
 3. How much **memory bandwidth** can be saved vs FlashAttention?
 4. When does adaptive rank outperform static approximations?
+5. What are the optimal **hardware-aware heuristics** for precision/rank selection?
 
 ---
 
