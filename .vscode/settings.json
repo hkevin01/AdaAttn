@@ -1,3 +1,8 @@
 {
-  "workbench.colorTheme": "GitHub Dark"
+    "workbench.colorTheme": "Material Theme Darker",
+    "workbench.colorCustomizations": {
+        "editor.background": "#1e1e1e",
+        "sideBar.background": "#252526",
+        "activityBar.background": "#2d2d30"
+    }
 }

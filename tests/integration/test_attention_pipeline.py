@@ -165,11 +165,12 @@ class TestAttentionPipeline:
         x = torch.randn(batch_size, seq_len, 128)
 
         for precision in [PrecisionMode.FP32, PrecisionMode.FP16, PrecisionMode.BF16]:
-            attn = AdaptivePrecisionAttention(
+            config = AttentionConfig(
                 embed_dim=128,
                 num_heads=4,
-                default_precision=precision,
+                precision=precision,
             )
+            attn = AdaptivePrecisionAttention(config=config)
             attn.eval()
 
             output, _ = attn(x, x, x)

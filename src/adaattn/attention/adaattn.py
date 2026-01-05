@@ -281,13 +281,14 @@ class AdaAttention(BaseAttention):
         target_dtype = precision.to_dtype()
         original_dtype = query.dtype
 
-        q = query.to(target_dtype)
-        k = key.to(target_dtype)
+        # Project to low-rank space (keep in original dtype for linear layers)
+        q_low = self.rank_proj_down(query)
+        k_low = self.rank_proj_down(key)
+        
+        # Convert to target precision for attention computation
+        q_low = q_low.to(target_dtype)
+        k_low = k_low.to(target_dtype)
         v = value.to(target_dtype)
-
-        # Project to low-rank space
-        q_low = self.rank_proj_down(q)
-        k_low = self.rank_proj_down(k)
 
         scores = torch.matmul(q_low, k_low.transpose(-2, -1)) * self.scale
 

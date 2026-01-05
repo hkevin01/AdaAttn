@@ -101,23 +101,23 @@ class AdaptivePrecisionAttention(BaseAttention):
         self.supports_bf16 = self._supports_bfloat16()
         self.supports_fp8 = self._supports_fp8()
 
-        # Linear projections
-        self.q_proj = nn.Linear(embed_dim, embed_dim)
-        self.k_proj = nn.Linear(embed_dim, embed_dim)
-        self.v_proj = nn.Linear(embed_dim, embed_dim)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        # Linear projections (Q, K, V, and output)
+        self.q_proj = nn.Linear(self.config.embed_dim, self.config.embed_dim, bias=False)
+        self.k_proj = nn.Linear(self.config.embed_dim, self.config.embed_dim, bias=False)
+        self.v_proj = nn.Linear(self.config.embed_dim, self.config.embed_dim, bias=False)
+        self.out_proj = nn.Linear(self.config.embed_dim, self.config.embed_dim, bias=False)
 
-        # Dropout layers
-        self.attn_dropout = nn.Dropout(dropout)
-        self.resid_dropout = nn.Dropout(dropout)
+        # Dropout layers  
+        self.attn_dropout = nn.Dropout(self.config.dropout)
+        self.resid_dropout = nn.Dropout(self.config.dropout)
 
         # Statistics tracking
         self._precision_usage = torch.zeros(len(self.precision_levels))
         self._call_count = 0
         self._quality_loss = 0.0
 
-        # Scaling factor
-        self.scale = 1.0 / math.sqrt(embed_dim // num_heads)
+        # Scaling factor 
+        self.scale = 1.0 / math.sqrt(self.head_dim)
 
     def _detect_cuda_capability(self) -> Tuple[int, int]:
         """Detect CUDA compute capability."""
