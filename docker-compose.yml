@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # Main research environment
+  adaattn-research:
+    build: .
+    container_name: adaattn_research
+    hostname: adaattn-research
+    volumes:
+      - .:/workspace/AdaAttn
+      - ./logs:/workspace/logs
+      - ./results:/workspace/results
+      - ./datasets:/workspace/datasets
+      - ./models:/workspace/models
+      - ./configs:/workspace/configs
+    ports:
+      - "8888:8888"  # Jupyter Lab
+      - "6006:6006"  # TensorBoard
+      - "5000:5000"  # MLflow
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - CUDA_VISIBLE_DEVICES=0
+    runtime: nvidia
+    working_dir: /workspace/AdaAttn
+    command: bash -c "
+      echo 'Starting AdaAttn Research Environment...' &&
+      mkdir -p /workspace/logs/tensorboard &&
+      mkdir -p /workspace/logs/mlflow &&
+      tensorboard --logdir=/workspace/logs/tensorboard --bind_all --port=6006 --reload_interval=1 &
+      jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' &
+      tail -f /dev/null
+    "
+    stdin_open: true
+    tty: true
+
+  # MLflow tracking server
+  mlflow-server:
+    image: python:3.11-slim
+    container_name: adaattn_mlflow
+    volumes:
+      - ./logs/mlflow:/mlflow
+    ports:
+      - "5001:5000"
+    command: bash -c "
+      pip install mlflow &&
+      mlflow server --backend-store-uri file:///mlflow --default-artifact-root file:///mlflow/artifacts --host 0.0.0.0 --port 5000
+    "
+
+  # TensorBoard standalone (alternative)
+  tensorboard:
+    image: tensorflow/tensorflow:latest-gpu
+    container_name: adaattn_tensorboard
+    volumes:
+      - ./logs/tensorboard:/logs
+    ports:
+      - "6007:6006"
+    command: tensorboard --logdir=/logs --bind_all --reload_interval=1
+
+networks:
+  default:
+    name: adaattn_network
