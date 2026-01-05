@@ -21,6 +21,11 @@ from adaattn.attention.base import (
     Timer,
 )
 from adaattn.attention.dense import DenseAttention
+from adaattn.linalg.entropy import (
+    estimate_entropy,
+    normalized_entropy,
+    attention_entropy,
+)
 
 
 class AdaptiveRankAttention(BaseAttention):
@@ -90,6 +95,11 @@ class AdaptiveRankAttention(BaseAttention):
         self.adaptive_threshold = adaptive_threshold
         self.min_rank = max(1, min_rank)
         self.causal = causal
+        
+        # Hardware-aware thresholds
+        self._device_type = None
+        self._memory_threshold = 0.8  # Use low-rank if memory usage > 80%
+        self._sequence_threshold = 512  # Use low-rank for sequences > 512
 
         # Linear projections
         self.q_proj = nn.Linear(embed_dim, embed_dim)
@@ -149,23 +159,38 @@ class AdaptiveRankAttention(BaseAttention):
         min_dim = min(seq_q, seq_k)
 
         if method == "entropy":
-            # Use softmax entropy as proxy for rank
+            # Enhanced entropy-based rank estimation
             with torch.no_grad():
                 probs = F.softmax(scores, dim=-1)
-                # Compute entropy: -sum(p * log(p))
-                entropy = -(probs * torch.log(probs + self.config.eps)).sum(dim=-1)
-                # Average over query positions
-                avg_entropy = entropy.mean(dim=-1)  # (batch, heads)
-                # Normalize by max entropy
+                
+                # Multi-scale entropy analysis
+                # 1. Local entropy (per query position)
+                local_entropy = estimate_entropy(probs, dim=-1, eps=self.config.eps)
+                
+                # 2. Global entropy (per head)
+                global_entropy = attention_entropy(probs, reduce="mean", eps=self.config.eps)
+                
+                # 3. Entropy variance (attention focus consistency)
+                entropy_var = local_entropy.var(dim=-1)  # (batch, heads)
+                
+                # Normalize entropy metrics
                 max_entropy = math.log(seq_k)
-                normalized_entropy = avg_entropy / max_entropy
-
-                # Higher entropy = more uniform = higher effective rank
-                # Lower entropy = more peaked = lower effective rank
-                effective_rank = normalized_entropy * min_dim
-
-                # Decide based on threshold
-                use_low_rank = normalized_entropy < self.adaptive_threshold
+                norm_global_entropy = global_entropy / max_entropy
+                norm_entropy_var = entropy_var / (max_entropy ** 2)
+                
+                # Combined rank estimation heuristic
+                # High entropy + low variance = uniform attention (high rank)
+                # Low entropy + high variance = focused attention (low rank)
+                focus_score = 1.0 - norm_global_entropy + norm_entropy_var
+                focus_score = torch.clamp(focus_score, 0.0, 1.0)
+                
+                # Hardware-aware adjustments
+                hardware_penalty = self._get_hardware_penalty(batch_size, seq_q, seq_k)
+                adjusted_threshold = self.adaptive_threshold + hardware_penalty
+                
+                # Rank decision
+                use_low_rank = focus_score > adjusted_threshold
+                effective_rank = (1.0 - focus_score) * min_dim
 
         elif method == "power":
             # Power iteration for spectral norm estimation
@@ -386,6 +411,98 @@ class AdaptiveRankAttention(BaseAttention):
         output = self.resid_dropout(output)
 
         return output, None
+    
+    def _get_hardware_penalty(
+        self, 
+        batch_size: int, 
+        seq_q: int, 
+        seq_k: int
+    ) -> float:
+        """
+        Compute hardware-aware penalty to bias toward low-rank.
+        
+        Returns higher penalty (favoring low-rank) when:
+        - Sequence lengths are very long
+        - Memory usage would be high
+        - Running on CPU (vs GPU)
+        """
+        penalty = 0.0
+        
+        # Sequence length penalty
+        max_seq = max(seq_q, seq_k)
+        if max_seq > self._sequence_threshold:
+            seq_penalty = min(0.2, (max_seq - self._sequence_threshold) / 2048)
+            penalty += seq_penalty
+        
+        # Memory usage penalty (rough estimation)
+        memory_usage = batch_size * self.config.num_heads * seq_q * seq_k * 4  # bytes
+        if torch.cuda.is_available() and memory_usage > 1e9:  # > 1GB
+            memory_penalty = min(0.15, memory_usage / 1e10)
+            penalty += memory_penalty
+        
+        # Device type penalty
+        if self._device_type is None:
+            self._device_type = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        if self._device_type == "cpu":
+            penalty += 0.1  # Bias toward low-rank on CPU
+        
+        return penalty
+    
+    def predict_optimal_rank(
+        self, 
+        q: Tensor, 
+        k: Tensor, 
+        v: Tensor
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Predict optimal rank based on input statistics (before attention computation).
+        
+        This provides a fast pre-computation heuristic that can guide
+        architecture decisions or adaptive batching.
+        
+        Args:
+            q, k, v: Input tensors
+            
+        Returns:
+            predicted_ranks: (batch, heads) tensor with predicted ranks
+            confidence: (batch, heads) confidence scores [0,1]
+        """
+        batch_size, seq_len, _ = q.shape
+        
+        with torch.no_grad():
+            # Compute input statistics
+            q_norm = q.norm(dim=-1)  # (batch, seq_len)
+            k_norm = k.norm(dim=-1)
+            v_norm = v.norm(dim=-1)
+            
+            # Variance in norms (indicator of rank structure)
+            q_var = q_norm.var(dim=-1)  # (batch,)
+            k_var = k_norm.var(dim=-1)
+            v_var = v_norm.var(dim=-1)
+            
+            # Average variance as rank predictor
+            avg_var = (q_var + k_var + v_var) / 3
+            
+            # High variance suggests diverse content (high rank)
+            # Low variance suggests similar content (low rank)
+            predicted_rank_ratio = torch.sigmoid(avg_var * 10 - 2)  # Adaptive scaling
+            
+            # Expand to (batch, heads)
+            predicted_rank_ratio = predicted_rank_ratio.unsqueeze(1).expand(
+                batch_size, self.config.num_heads
+            )
+            
+            head_dim = self.config.embed_dim // self.config.num_heads
+            predicted_ranks = predicted_rank_ratio * head_dim
+            
+            # Confidence based on variance consistency
+            var_consistency = 1.0 - torch.abs(q_var - k_var) / (q_var + k_var + 1e-8)
+            confidence = var_consistency.unsqueeze(1).expand(
+                batch_size, self.config.num_heads
+            )
+            
+            return predicted_ranks.int(), confidence
 
     def get_rank_statistics(self) -> dict:
         """Get statistics on rank decisions."""

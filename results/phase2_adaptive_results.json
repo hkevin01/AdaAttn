@@ -1,0 +1,147 @@
+[
+  {
+    "model_name": "adaptive_rank",
+    "batch_size": 4,
+    "seq_len": 256,
+    "embed_dim": 256,
+    "num_heads": 4,
+    "device": "cpu",
+    "avg_time_ms": 60.999165050270676,
+    "peak_memory_mb": 0,
+    "adaptation_stats": {
+      "call_count": 25,
+      "low_rank_usage_per_head": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "avg_low_rank_usage": 0.0
+    }
+  },
+  {
+    "model_name": "adaptive_precision",
+    "batch_size": 4,
+    "seq_len": 256,
+    "embed_dim": 256,
+    "num_heads": 4,
+    "device": "cpu",
+    "avg_time_ms": 134.5267483497082,
+    "peak_memory_mb": 0,
+    "adaptation_stats": {
+      "call_count": 25,
+      "precision_usage": {
+        "fp32": 0.0,
+        "bf16": 0.0,
+        "fp16": 100.0,
+        "fp8": 0.0
+      },
+      "hardware_support": {
+        "cuda_capability": [
+          0,
+          0
+        ],
+        "supports_bf16": false,
+        "supports_fp8": false
+      }
+    }
+  },
+  {
+    "model_name": "adaptive_rank",
+    "batch_size": 4,
+    "seq_len": 512,
+    "embed_dim": 256,
+    "num_heads": 4,
+    "device": "cpu",
+    "avg_time_ms": 96.70227934984723,
+    "peak_memory_mb": 0,
+    "adaptation_stats": {
+      "call_count": 25,
+      "low_rank_usage_per_head": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "avg_low_rank_usage": 0.0
+    }
+  },
+  {
+    "model_name": "adaptive_precision",
+    "batch_size": 4,
+    "seq_len": 512,
+    "embed_dim": 256,
+    "num_heads": 4,
+    "device": "cpu",
+    "avg_time_ms": 519.6784806506912,
+    "peak_memory_mb": 0,
+    "adaptation_stats": {
+      "call_count": 25,
+      "precision_usage": {
+        "fp32": 0.0,
+        "bf16": 0.0,
+        "fp16": 100.0,
+        "fp8": 0.0
+      },
+      "hardware_support": {
+        "cuda_capability": [
+          0,
+          0
+        ],
+        "supports_bf16": false,
+        "supports_fp8": false
+      }
+    }
+  },
+  {
+    "model_name": "adaptive_rank",
+    "batch_size": 4,
+    "seq_len": 512,
+    "embed_dim": 512,
+    "num_heads": 8,
+    "device": "cpu",
+    "avg_time_ms": 174.32431384986558,
+    "peak_memory_mb": 0,
+    "adaptation_stats": {
+      "call_count": 25,
+      "low_rank_usage_per_head": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "avg_low_rank_usage": 0.0
+    }
+  },
+  {
+    "model_name": "adaptive_precision",
+    "batch_size": 4,
+    "seq_len": 512,
+    "embed_dim": 512,
+    "num_heads": 8,
+    "device": "cpu",
+    "avg_time_ms": 1014.6652580502632,
+    "peak_memory_mb": 0,
+    "adaptation_stats": {
+      "call_count": 25,
+      "precision_usage": {
+        "fp32": 0.0,
+        "bf16": 0.0,
+        "fp16": 100.0,
+        "fp8": 0.0
+      },
+      "hardware_support": {
+        "cuda_capability": [
+          0,
+          0
+        ],
+        "supports_bf16": false,
+        "supports_fp8": false
+      }
+    }
+  }
+]

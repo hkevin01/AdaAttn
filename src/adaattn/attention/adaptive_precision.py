@@ -1,14 +1,15 @@
 """
 Adaptive precision attention implementation.
 
-This module provides attention that dynamically adjusts numerical
-precision based on runtime analysis of attention patterns.
+This module provides attention that dynamically selects numerical
+precision (FP32 -> BF16 -> FP16 -> FP8) based on hardware capabilities,
+model quality requirements, and runtime performance analysis.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple, Literal
+from typing import Optional, Tuple, Literal, Union
 
 import torch
 import torch.nn as nn
@@ -18,43 +19,43 @@ from torch import Tensor
 from adaattn.attention.base import (
     AttentionConfig,
     BaseAttention,
-    PrecisionMode,
-    NumericalError,
     Timer,
+    PrecisionMode,
 )
+from adaattn.linalg.entropy import estimate_entropy, normalized_entropy
 
 
 class AdaptivePrecisionAttention(BaseAttention):
     """
-    Attention with adaptive precision control.
+    Attention with adaptive numerical precision selection.
 
-    Dynamically adjusts precision (FP32/FP16/BF16/FP8) based on:
-    - Attention entropy
-    - QK score magnitudes
-    - Softmax saturation
+    Dynamically chooses between:
+    - FP32: Highest precision for critical computations
+    - BF16: Good balance of precision and performance 
+    - FP16: Faster computation, some precision loss
+    - FP8: Experimental, maximum speed (if supported)
+
+    The decision is made based on:
+    - Hardware capabilities (CUDA compute capability)
+    - Attention pattern analysis (entropy, gradients)
+    - Quality vs speed trade-off requirements
+    - Memory bandwidth constraints
 
     Example:
         >>> attn = AdaptivePrecisionAttention(embed_dim=512, num_heads=8)
         >>> q = torch.randn(2, 128, 512)
-        >>> k = torch.randn(2, 128, 512)
-        >>> v = torch.randn(2, 128, 512)
-        >>> output, weights = attn(q, k, v)
+        >>> output, weights = attn(q, q, q)
     """
-
-    # Thresholds for precision decisions
-    ENTROPY_HIGH_THRESHOLD = 0.8  # High entropy -> can use lower precision
-    ENTROPY_LOW_THRESHOLD = 0.3   # Low entropy -> may need higher precision
-    SCORE_MAGNITUDE_THRESHOLD = 50.0  # Large scores -> need higher precision
-    SATURATION_THRESHOLD = 0.95  # Near-saturation -> need higher precision
 
     def __init__(
         self,
         embed_dim: int = 512,
         num_heads: int = 8,
         dropout: float = 0.0,
-        default_precision: PrecisionMode = PrecisionMode.FP16,
-        allow_fp8: bool = False,
-        precision_fallback: bool = True,
+        precision_policy: Literal["quality", "balanced", "speed"] = "balanced",
+        min_precision: str = "fp16",
+        max_precision: str = "fp32",
+        adaptive_threshold: float = 0.1,
         causal: bool = False,
         config: Optional[AttentionConfig] = None,
         **kwargs,
@@ -66,29 +67,39 @@ class AdaptivePrecisionAttention(BaseAttention):
             embed_dim: Total embedding dimension
             num_heads: Number of attention heads
             dropout: Dropout probability
-            default_precision: Default precision mode
-            allow_fp8: Whether to allow FP8 precision
-            precision_fallback: Whether to fall back to higher precision on errors
+            precision_policy: Trading off quality vs speed
+            min_precision: Lowest precision to use (fp32, bf16, fp16, fp8)
+            max_precision: Highest precision to use
+            adaptive_threshold: Threshold for precision switching
             causal: Whether to apply causal masking
             config: Optional AttentionConfig
-            **kwargs: Additional config parameters
         """
         if config is None:
             config = AttentionConfig(
                 embed_dim=embed_dim,
                 num_heads=num_heads,
                 dropout=dropout,
-                precision=default_precision,
-                allow_precision_fallback=precision_fallback,
+                precision=PrecisionMode.AUTO,
                 **kwargs,
             )
 
         super().__init__(config=config)
 
-        self.default_precision = default_precision
-        self.allow_fp8 = allow_fp8
-        self.precision_fallback = precision_fallback
+        self.precision_policy = precision_policy
+        self.min_precision = min_precision
+        self.max_precision = max_precision
+        self.adaptive_threshold = adaptive_threshold
         self.causal = causal
+
+        # Precision hierarchy (lower index = higher precision)
+        self.precision_levels = ["fp32", "bf16", "fp16", "fp8"]
+        self.min_level = self.precision_levels.index(max_precision)
+        self.max_level = self.precision_levels.index(min_precision)
+
+        # Hardware capabilities
+        self.cuda_capability = self._detect_cuda_capability()
+        self.supports_bf16 = self._supports_bfloat16()
+        self.supports_fp8 = self._supports_fp8()
 
         # Linear projections
         self.q_proj = nn.Linear(embed_dim, embed_dim)
@@ -96,154 +107,132 @@ class AdaptivePrecisionAttention(BaseAttention):
         self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
-        # Dropout
+        # Dropout layers
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
 
+        # Statistics tracking
+        self._precision_usage = torch.zeros(len(self.precision_levels))
+        self._call_count = 0
+        self._quality_loss = 0.0
+
         # Scaling factor
-        self.scale = 1.0 / math.sqrt(self.head_dim)
+        self.scale = 1.0 / math.sqrt(embed_dim // num_heads)
 
-        # Precision tracking
-        self.register_buffer("_precision_switches", torch.tensor(0))
-        self.register_buffer("_precision_distribution", torch.zeros(4))  # FP32, FP16, BF16, FP8
+    def _detect_cuda_capability(self) -> Tuple[int, int]:
+        """Detect CUDA compute capability."""
+        if torch.cuda.is_available():
+            cap = torch.cuda.get_device_capability()
+            return cap
+        return (0, 0)
 
-        self._reset_parameters()
+    def _supports_bfloat16(self) -> bool:
+        """Check if hardware supports efficient BF16."""
+        if not torch.cuda.is_available():
+            return False
+        
+        # BF16 well supported on Ampere+ (8.x+) and some Turing (7.5+)
+        major, minor = self.cuda_capability
+        return (major > 7) or (major == 7 and minor >= 5)
 
-    def _reset_parameters(self) -> None:
-        """Initialize parameters."""
-        for proj in [self.q_proj, self.k_proj, self.v_proj, self.out_proj]:
-            nn.init.xavier_uniform_(proj.weight)
-            if proj.bias is not None:
-                nn.init.zeros_(proj.bias)
+    def _supports_fp8(self) -> bool:
+        """Check if hardware supports FP8.""" 
+        if not torch.cuda.is_available():
+            return False
+        
+        # FP8 requires Hopper (9.x+) or newer
+        major, _ = self.cuda_capability
+        return major >= 9
 
-    def _analyze_precision_requirements(
-        self,
-        query: Tensor,
-        key: Tensor,
-    ) -> PrecisionMode:
+    def _select_precision(
+        self, 
+        q: Tensor, 
+        k: Tensor, 
+        v: Tensor,
+        attention_mask: Optional[Tensor] = None
+    ) -> str:
         """
-        Analyze inputs to determine optimal precision.
-
+        Select optimal precision based on input analysis and policy.
+        
         Args:
-            query: Query tensor
-            key: Key tensor
-
-        Returns:
-            Recommended PrecisionMode
-        """
-        with torch.no_grad():
-            # Compute approximate attention scores
-            q_sample = query[:, :, :min(64, query.size(2))]
-            k_sample = key[:, :, :min(64, key.size(2))]
-
-            scores = torch.matmul(q_sample, k_sample.transpose(-2, -1)) * self.scale
-
-            # Check score magnitudes
-            max_score = scores.abs().max().item()
-            if max_score > self.SCORE_MAGNITUDE_THRESHOLD:
-                return PrecisionMode.FP32
-
-            # Compute softmax and check for saturation
-            probs = F.softmax(scores, dim=-1)
-            max_prob = probs.max().item()
-            if max_prob > self.SATURATION_THRESHOLD:
-                # Near-saturated attention - need higher precision
-                return PrecisionMode.FP32
-
-            # Compute entropy
-            entropy = -(probs * torch.log(probs + self.config.eps)).sum(dim=-1)
-            max_entropy = math.log(probs.size(-1))
-            normalized_entropy = (entropy / max_entropy).mean().item()
-
-            # Decide based on entropy
-            if normalized_entropy > self.ENTROPY_HIGH_THRESHOLD:
-                # High entropy (uniform) - can use lower precision
-                if self.allow_fp8:
-                    return PrecisionMode.FP8
-                return PrecisionMode.FP16
-
-            elif normalized_entropy < self.ENTROPY_LOW_THRESHOLD:
-                # Low entropy (peaked) - may need higher precision
-                return PrecisionMode.BF16
-
-            else:
-                # Medium entropy - use default
-                return self.default_precision
-
-    def _compute_attention_with_precision(
-        self,
-        query: Tensor,
-        key: Tensor,
-        value: Tensor,
-        precision: PrecisionMode,
-        attention_mask: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Optional[Tensor]]:
-        """
-        Compute attention with specified precision.
-
-        Args:
-            query: Query tensor (batch, heads, seq_q, head_dim)
-            key: Key tensor (batch, heads, seq_k, head_dim)
-            value: Value tensor (batch, heads, seq_k, head_dim)
-            precision: Precision mode to use
+            q, k, v: Input tensors
             attention_mask: Optional attention mask
-
+            
         Returns:
-            Attention output and weights
+            Precision string (fp32, bf16, fp16, fp8)
         """
-        original_dtype = query.dtype
-        target_dtype = precision.to_dtype()
+        batch_size, seq_len, _ = q.shape
+        
+        # Start with policy-based baseline
+        if self.precision_policy == "quality":
+            base_level = self.min_level  # Highest precision
+        elif self.precision_policy == "speed":
+            base_level = self.max_level  # Lowest precision
+        else:  # balanced
+            base_level = (self.min_level + self.max_level) // 2
 
-        # Cast to target precision
-        q = query.to(target_dtype)
-        k = key.to(target_dtype)
-        v = value.to(target_dtype)
+        # Adjust based on input characteristics
+        with torch.no_grad():
+            # Check for extreme values that need high precision
+            q_max = q.abs().max()
+            k_max = k.abs().max()
+            v_max = v.abs().max()
+            max_val = max(q_max, k_max, v_max)
+            
+            # Very large values need higher precision
+            if max_val > 10.0:
+                base_level = max(0, base_level - 1)
+            
+            # Check gradient requirements (if in training)
+            if self.training:
+                # Check if any gradients are very small (need precision)
+                if hasattr(q, 'grad') and q.grad is not None:
+                    grad_min = q.grad.abs().min()
+                    if grad_min < 1e-5:
+                        base_level = max(0, base_level - 1)
+            
+            # Sequence length considerations
+            if seq_len > 2048:
+                # Long sequences benefit from lower precision for speed
+                base_level = min(self.max_level, base_level + 1)
+            
+            # Memory pressure considerations
+            memory_usage = batch_size * seq_len * seq_len * 4  # Rough estimate
+            if torch.cuda.is_available():
+                available_memory = torch.cuda.get_device_properties(0).total_memory
+                if memory_usage > available_memory * 0.7:  # High memory pressure
+                    base_level = min(self.max_level, base_level + 1)
 
-        # Compute attention scores
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-
-        # Clamp to prevent overflow
-        if precision in (PrecisionMode.FP16, PrecisionMode.FP8):
-            scores = torch.clamp(scores, min=-65504, max=65504)
-
-        # Apply causal mask if needed
-        if self.causal:
-            seq_q, seq_k = scores.size(-2), scores.size(-1)
-            causal_mask = torch.triu(
-                torch.ones(seq_q, seq_k, dtype=torch.bool, device=scores.device),
-                diagonal=1,
-            )
-            scores = scores.masked_fill(causal_mask, float("-inf"))
-
-        # Apply attention mask if provided
-        if attention_mask is not None:
-            if attention_mask.ndim == 2:
-                attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-            elif attention_mask.ndim == 3:
-                attention_mask = attention_mask.unsqueeze(1)
-
-            if attention_mask.dtype == torch.bool:
-                scores = scores.masked_fill(~attention_mask, float("-inf"))
+        # Hardware capability constraints
+        target_precision = self.precision_levels[base_level]
+        
+        if target_precision == "bf16" and not self.supports_bf16:
+            if base_level < self.max_level:
+                target_precision = "fp16"
             else:
-                scores = scores + attention_mask.to(target_dtype)
+                target_precision = "fp32"
+                
+        elif target_precision == "fp8" and not self.supports_fp8:
+            if self.supports_bf16:
+                target_precision = "bf16" 
+            else:
+                target_precision = "fp16"
 
-        # Softmax in higher precision for stability
-        if precision in (PrecisionMode.FP8, PrecisionMode.FP16):
-            scores_fp32 = scores.float()
-            attn_weights = F.softmax(scores_fp32, dim=-1).to(target_dtype)
+        return target_precision
+
+    def _convert_precision(self, tensor: Tensor, precision: str) -> Tensor:
+        """Convert tensor to specified precision."""
+        if precision == "fp32":
+            return tensor.float()
+        elif precision == "bf16":
+            return tensor.to(torch.bfloat16) if self.supports_bf16 else tensor.half()
+        elif precision == "fp16":
+            return tensor.half()
+        elif precision == "fp8":
+            # FP8 not directly supported, use FP16 as fallback
+            return tensor.half()
         else:
-            attn_weights = F.softmax(scores, dim=-1)
-
-        # Apply dropout
-        attn_weights = self.attn_dropout(attn_weights)
-
-        # Compute output
-        output = torch.matmul(attn_weights, v)
-
-        # Cast back to original dtype
-        output = output.to(original_dtype)
-
-        return output, attn_weights
+            return tensor
 
     def _forward_impl(
         self,
@@ -254,95 +243,142 @@ class AdaptivePrecisionAttention(BaseAttention):
         need_weights: bool = False,
     ) -> Tuple[Tensor, Optional[Tensor]]:
         """
-        Implement adaptive precision attention forward pass.
+        Forward pass with adaptive precision.
 
         Args:
-            query: Query tensor (batch, seq_q, embed_dim)
-            key: Key tensor (batch, seq_k, embed_dim)
-            value: Value tensor (batch, seq_k, embed_dim)
+            query: Query tensor (batch_size, seq_len, embed_dim)
+            key: Key tensor (batch_size, seq_len, embed_dim)
+            value: Value tensor (batch_size, seq_len, embed_dim)
             attention_mask: Optional attention mask
             need_weights: Whether to return attention weights
 
         Returns:
-            Tuple of output tensor and optional attention weights
+            Tuple of (output, attention_weights)
         """
-        batch_size, seq_len_q, _ = query.shape
-        _, seq_len_k, _ = key.shape
+        batch_size, seq_len_q, embed_dim = query.shape
+        seq_len_k = key.size(1)
 
-        # Project Q, K, V
-        q = self.q_proj(query)
-        k = self.k_proj(key)
-        v = self.v_proj(value)
+        # Select optimal precision
+        target_precision = self._select_precision(query, key, value, attention_mask)
+        
+        # Track precision usage
+        self._call_count += 1
+        precision_idx = self.precision_levels.index(target_precision)
+        self._precision_usage[precision_idx] += 1
+
+        # Store original precision for output
+        original_dtype = query.dtype
+
+        # Convert inputs to target precision
+        with Timer(f"precision_conversion_{target_precision}"):
+            q = self._convert_precision(self.q_proj(query), target_precision)
+            k = self._convert_precision(self.k_proj(key), target_precision) 
+            v = self._convert_precision(self.v_proj(value), target_precision)
 
         # Reshape for multi-head attention
-        q = q.view(batch_size, seq_len_q, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(batch_size, seq_len_k, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(batch_size, seq_len_k, self.num_heads, self.head_dim).transpose(1, 2)
+        q = q.view(batch_size, seq_len_q, self.config.num_heads, self.head_dim)
+        k = k.view(batch_size, seq_len_k, self.config.num_heads, self.head_dim)
+        v = v.view(batch_size, seq_len_k, self.config.num_heads, self.head_dim)
 
-        # Determine optimal precision
-        precision = self._analyze_precision_requirements(q, k)
+        # Transpose for attention computation
+        q = q.transpose(1, 2)  # (batch, heads, seq_q, head_dim)
+        k = k.transpose(1, 2)  # (batch, heads, seq_k, head_dim)
+        v = v.transpose(1, 2)  # (batch, heads, seq_k, head_dim)
 
-        # Update metrics
-        if self._metrics is not None:
-            self._metrics.precision_mode = precision
-
-        # Track precision usage
-        precision_idx = {
-            PrecisionMode.FP32: 0,
-            PrecisionMode.FP16: 1,
-            PrecisionMode.BF16: 2,
-            PrecisionMode.FP8: 3,
-        }.get(precision, 0)
-        self._precision_distribution[precision_idx] += 1
-
-        # Compute attention with selected precision
-        try:
-            attn_output, attn_weights = self._compute_attention_with_precision(
-                q, k, v, precision, attention_mask
-            )
-        except (RuntimeError, FloatingPointError) as e:
-            # Fallback to higher precision on error
-            if self.precision_fallback and precision != PrecisionMode.FP32:
-                self._precision_switches += 1
-                attn_output, attn_weights = self._compute_attention_with_precision(
-                    q, k, v, PrecisionMode.FP32, attention_mask
-                )
-            else:
-                raise NumericalError(f"Attention computation failed: {e}")
+        # Compute attention in target precision
+        with Timer(f"attention_computation_{target_precision}"):
+            attn_output = self._compute_attention(q, k, v, attention_mask)
 
         # Reshape back
         attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.view(batch_size, seq_len_q, self.embed_dim)
+        attn_output = attn_output.view(batch_size, seq_len_q, embed_dim)
+
+        # Convert back to original precision for output projection
+        if target_precision != str(original_dtype).replace('torch.', ''):
+            attn_output = attn_output.to(original_dtype)
 
         # Output projection
         output = self.out_proj(attn_output)
         output = self.resid_dropout(output)
 
-        if need_weights:
-            avg_weights = attn_weights.mean(dim=1)
-            return output, avg_weights
-        else:
-            return output, None
+        return output, None
+
+    def _compute_attention(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        attention_mask: Optional[Tensor] = None,
+    ) -> Tensor:
+        """
+        Compute attention with current precision.
+        
+        Args:
+            q, k, v: Query, key, value tensors in target precision
+            attention_mask: Optional attention mask
+            
+        Returns:
+            Attention output tensor
+        """
+        batch_size, num_heads, seq_q, head_dim = q.shape
+        _, _, seq_k, _ = k.shape
+
+        # Compute attention scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+
+        # Apply causal mask if needed
+        if self.causal:
+            causal_mask = torch.triu(
+                torch.ones(seq_q, seq_k, dtype=torch.bool, device=scores.device),
+                diagonal=1,
+            )
+            scores = scores.masked_fill(causal_mask, float('-inf'))
+
+        # Apply attention mask if provided
+        if attention_mask is not None:
+            if attention_mask.dim() == 2:
+                attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
+            elif attention_mask.dim() == 3:
+                attention_mask = attention_mask.unsqueeze(1)
+            
+            scores = scores + attention_mask
+
+        # Softmax and dropout
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_weights = self.attn_dropout(attn_weights)
+
+        # Apply to values
+        output = torch.matmul(attn_weights, v)
+
+        return output
 
     def get_precision_statistics(self) -> dict:
         """Get statistics on precision usage."""
-        total = self._precision_distribution.sum().item()
-        if total > 0:
-            distribution = (self._precision_distribution / total).tolist()
+        if self._call_count > 0:
+            usage_percentages = (self._precision_usage / self._call_count * 100).tolist()
         else:
-            distribution = [0.0, 0.0, 0.0, 0.0]
+            usage_percentages = [0.0] * len(self.precision_levels)
 
         return {
-            "precision_switches": self._precision_switches.item(),
-            "distribution": {
-                "FP32": distribution[0],
-                "FP16": distribution[1],
-                "BF16": distribution[2],
-                "FP8": distribution[3],
+            "call_count": self._call_count,
+            "precision_usage": dict(zip(self.precision_levels, usage_percentages)),
+            "hardware_support": {
+                "cuda_capability": self.cuda_capability,
+                "supports_bf16": self.supports_bf16,
+                "supports_fp8": self.supports_fp8,
             },
         }
 
+    def set_precision_policy(self, policy: str) -> None:
+        """Update precision policy at runtime."""
+        if policy not in ["quality", "balanced", "speed"]:
+            raise ValueError(f"Invalid policy: {policy}")
+        self.precision_policy = policy
+
     def extra_repr(self) -> str:
-        """Return extra representation."""
+        """Return extra representation.""" 
         base_repr = super().extra_repr()
-        return f"{base_repr}, default_precision={self.default_precision.name}"
+        return (
+            f"{base_repr}, precision_policy={self.precision_policy}, "
+            f"range={self.max_precision}-{self.min_precision}"
+        )
