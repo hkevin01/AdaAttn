@@ -2,8 +2,7 @@
 GPU Kernels for AdaAttn.
 
 This module provides CUDA kernels for efficient attention computation.
-Currently contains Python fallback implementations, with CUDA kernels
-to be compiled via setup.py when available.
+Includes CUDA utilities, FlashAttention integration, and optimized kernels.
 """
 
 from __future__ import annotations
@@ -15,6 +14,26 @@ import torch
 from torch import Tensor
 
 logger = logging.getLogger(__name__)
+
+# Import GPU optimization modules
+try:
+    from .cuda_utils import (
+        CUDAManager,
+        kernel_manager,
+        fused_scaled_dot_product_attention,
+        adaptive_attention_kernel,
+        memory_efficient_attention,
+    )
+    from .flash_attention import (
+        FLASH_ATTN_AVAILABLE,
+        AdaptiveFlashAttention,
+        flash_attention_forward,
+        FlashAttentionConfig,
+    )
+    GPU_OPTIMIZATIONS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"GPU optimizations not available: {e}")
+    GPU_OPTIMIZATIONS_AVAILABLE = False
 
 # Try to import compiled CUDA extensions
 _CUDA_AVAILABLE = False

@@ -1,8 +1,13 @@
 {
-    "workbench.colorTheme": "Material Theme Darker",
+    "workbench.colorTheme": "One Dark Pro Mix",
     "workbench.colorCustomizations": {
         "editor.background": "#1e1e1e",
         "sideBar.background": "#252526",
-        "activityBar.background": "#2d2d30"
-    }
+        "activityBar.background": "#2d2d30",
+        "statusBar.background": "#007acc",
+        "panel.background": "#1e1e1e"
+    },
+    "editor.fontSize": 14,
+    "editor.lineHeight": 1.6,
+    "editor.minimap.enabled": false
 }

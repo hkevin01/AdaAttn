@@ -25,6 +25,14 @@ from adaattn.attention.base import (
 from adaattn.attention.adaptive_rank import AdaptiveRankAttention
 from adaattn.attention.adaptive_precision import AdaptivePrecisionAttention
 
+try:
+    from adaattn.kernels.cuda_utils import kernel_manager, CUDAManager
+    from adaattn.kernels.flash_attention import FLASH_ATTN_AVAILABLE, flash_attention_forward, FlashAttentionConfig
+    GPU_OPTIMIZATIONS_AVAILABLE = True
+except ImportError:
+    GPU_OPTIMIZATIONS_AVAILABLE = False
+    FLASH_ATTN_AVAILABLE = False
+
 
 class AdaAttention(BaseAttention):
     """
@@ -60,6 +68,8 @@ class AdaAttention(BaseAttention):
         enable_adaptive_precision: bool = True,
         default_precision: PrecisionMode = PrecisionMode.FP16,
         allow_fp8: bool = False,
+        # GPU optimization settings
+        enable_gpu_optimization: bool = True,
         # Attention settings
         causal: bool = False,
         bias: bool = True,
@@ -107,6 +117,9 @@ class AdaAttention(BaseAttention):
         self.default_precision = default_precision
         self.allow_fp8 = allow_fp8
         self.causal = causal
+        
+        # GPU optimization settings
+        self.enable_gpu_optimization = enable_gpu_optimization and GPU_OPTIMIZATIONS_AVAILABLE
 
         # Linear projections
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
@@ -134,6 +147,22 @@ class AdaAttention(BaseAttention):
         self.register_buffer("_call_count", torch.tensor(0))
         self.register_buffer("_low_rank_calls", torch.tensor(0))
         self.register_buffer("_precision_distribution", torch.zeros(4))
+        
+        # GPU optimization components (if available)
+        if GPU_OPTIMIZATIONS_AVAILABLE and self.enable_gpu_optimization:
+            self.cuda_manager = CUDAManager()
+            self.flash_config = FlashAttentionConfig(
+                enable_flash=FLASH_ATTN_AVAILABLE,
+                causal=self.causal,
+                dropout_p=dropout,
+            )
+            self.register_buffer("_flash_calls", torch.tensor(0))
+            self.memory_budget = self._estimate_memory_budget()
+        else:
+            self.cuda_manager = None
+            self.flash_config = None
+            self.enable_gpu_optimization = False
+            self.memory_budget = None
 
         self._reset_parameters()
 
@@ -152,6 +181,49 @@ class AdaAttention(BaseAttention):
             nn.init.orthogonal_(self.rank_proj_down.weight)
         if self.rank_proj_up is not None:
             nn.init.orthogonal_(self.rank_proj_up.weight)
+
+    def _estimate_memory_budget(self) -> Optional[int]:
+        """Estimate available GPU memory budget."""
+        if not self.enable_gpu_optimization or self.cuda_manager is None:
+            return None
+        
+        free_memory, total_memory = self.cuda_manager.get_memory_info()
+        # Use 70% of free memory as budget, minimum 100MB
+        budget = max(int(free_memory * 0.7), 100 * 1024**2)
+        return budget
+
+    def _select_optimal_kernel(self, seq_len: int, batch_size: int) -> str:
+        """Select optimal attention kernel based on input characteristics."""
+        if not self.enable_gpu_optimization or self.cuda_manager is None:
+            return "pytorch_fallback"
+        
+        # Use kernel manager to select optimal implementation
+        return kernel_manager.get_optimal_kernel(
+            seq_len=seq_len,
+            embed_dim=self.config.embed_dim,
+            num_heads=self.config.num_heads,
+            use_low_rank=self.enable_adaptive_rank,
+            memory_budget=self.memory_budget,
+        )
+
+    def _use_flash_attention(self, query: Tensor, key: Tensor, value: Tensor) -> bool:
+        """Determine if FlashAttention should be used."""
+        if not FLASH_ATTN_AVAILABLE or self.flash_config is None:
+            return False
+        
+        # Check tensor requirements
+        if not query.is_cuda:
+            return False
+        
+        if query.dtype not in [torch.float16, torch.bfloat16]:
+            return False
+        
+        # Check sequence length (FlashAttention is most beneficial for longer sequences)
+        seq_len = query.shape[-2]
+        if seq_len < 128:
+            return False
+        
+        return True
 
     def _analyze_attention_pattern(
         self,
@@ -330,7 +402,7 @@ class AdaAttention(BaseAttention):
         need_weights: bool = False,
     ) -> Tuple[Tensor, Optional[Tensor]]:
         """
-        Implement AdaAttention forward pass.
+        Implement AdaAttention forward pass with GPU optimizations.
         """
         batch_size, seq_len_q, _ = query.shape
         _, seq_len_k, _ = key.shape
@@ -345,6 +417,58 @@ class AdaAttention(BaseAttention):
         k = k.view(batch_size, seq_len_k, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len_k, self.num_heads, self.head_dim).transpose(1, 2)
 
+        # GPU optimization: Try FlashAttention first if available
+        if self._use_flash_attention(q, k, v) and not need_weights:
+            try:
+                # Convert to FlashAttention format [batch, seq_len, num_heads, head_dim]
+                q_flash = q.transpose(1, 2)
+                k_flash = k.transpose(1, 2)
+                v_flash = v.transpose(1, 2)
+                
+                # Update FlashAttention config
+                self.flash_config.dropout_p = self.attn_dropout.p if self.training else 0.0
+                self.flash_config.return_attn_probs = need_weights
+                
+                attn_output, attn_weights = flash_attention_forward(
+                    q_flash, k_flash, v_flash, 
+                    self.flash_config, attention_mask
+                )
+                
+                # Convert back to [batch, num_heads, seq_len, head_dim]
+                attn_output = attn_output.transpose(1, 2)
+                self._flash_calls += 1
+                
+            except Exception as e:
+                # Fallback to adaptive attention
+                attn_output, attn_weights = self._adaptive_attention_forward(
+                    q, k, v, attention_mask, need_weights
+                )
+        else:
+            # Use adaptive attention mechanism
+            attn_output, attn_weights = self._adaptive_attention_forward(
+                q, k, v, attention_mask, need_weights
+            )
+
+        # Reshape back
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.view(batch_size, seq_len_q, self.embed_dim)
+
+        # Output projection
+        output = self.out_proj(attn_output)
+        output = self.resid_dropout(output)
+
+        return output, attn_weights
+
+    def _adaptive_attention_forward(
+        self,
+        q: Tensor,
+        k: Tensor, 
+        v: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        need_weights: bool = False,
+    ) -> Tuple[Tensor, Optional[Tensor]]:
+        """Adaptive attention forward with rank and precision selection."""
+        
         # Analyze attention pattern
         use_low_rank, precision, effective_rank = self._analyze_attention_pattern(q, k)
 
@@ -376,15 +500,8 @@ class AdaAttention(BaseAttention):
                 q, k, v, precision, attention_mask
             )
 
-        # Reshape back
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.view(batch_size, seq_len_q, self.embed_dim)
-
-        # Output projection
-        output = self.out_proj(attn_output)
-        output = self.resid_dropout(output)
-
-        return output, None
+        # Return weights as None for now (can be enhanced later)
+        return attn_output, None
 
     def get_statistics(self) -> dict:
         """Get comprehensive statistics."""
@@ -396,7 +513,7 @@ class AdaAttention(BaseAttention):
             low_rank_ratio = 0.0
             precision_dist = [0.0, 0.0, 0.0, 0.0]
 
-        return {
+        stats = {
             "call_count": call_count,
             "low_rank_ratio": low_rank_ratio,
             "precision_distribution": {
@@ -406,6 +523,25 @@ class AdaAttention(BaseAttention):
                 "FP8": precision_dist[3],
             },
         }
+        
+        # Add GPU optimization statistics if available
+        if GPU_OPTIMIZATIONS_AVAILABLE and hasattr(self, '_flash_calls'):
+            flash_calls = self._flash_calls.item()
+            stats.update({
+                "flash_calls": flash_calls,
+                "flash_ratio": flash_calls / call_count if call_count > 0 else 0.0,
+                "gpu_optimizations_available": True,
+                "flash_attention_available": FLASH_ATTN_AVAILABLE,
+            })
+        else:
+            stats.update({
+                "flash_calls": 0,
+                "flash_ratio": 0.0,
+                "gpu_optimizations_available": False,
+                "flash_attention_available": False,
+            })
+        
+        return stats
 
     def extra_repr(self) -> str:
         """Return extra representation."""
