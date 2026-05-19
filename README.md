@@ -213,12 +213,12 @@ def select_rank(Q, K, threshold=0.95):
 
 **Precision Hierarchy**:
 
-| **Precision** | **Bits** | **Mantissa** | **Exponent** | **Range** | **TFLOPS (A100)** | **Use Case**                    |
+| <sub>**Precision**</sub> | <sub>**Bits**</sub> | <sub>**Mantissa**</sub> | <sub>**Exponent**</sub> | <sub>**Range**</sub> | <sub>**TFLOPS (A100)**</sub> | <sub>**Use Case**</sub> |
 | ------------- | -------- | ------------ | ------------ | --------- | ----------------- | ------------------------------- |
-| FP32          | 32       | 23           | 8            | ±3.4e38   | 19.5              | Accumulation, critical ops      |
-| BF16          | 16       | 7            | 8            | ±3.4e38   | 312               | General compute, wide range     |
-| FP16          | 16       | 10           | 5            | ±65504    | 312               | General compute, high precision |
-| FP8 (E4M3)    | 8        | 3            | 4            | ±448      | 624*              | Non-critical matmul             |
+| <sub>FP32</sub> | <sub>32</sub> | <sub>23</sub> | <sub>8</sub> | <sub>±3.4e38</sub> | <sub>19.5</sub> | <sub>Accumulation, critical ops</sub> |
+| <sub>BF16</sub> | <sub>16</sub> | <sub>7</sub> | <sub>8</sub> | <sub>±3.4e38</sub> | <sub>312</sub> | <sub>General compute, wide range</sub> |
+| <sub>FP16</sub> | <sub>16</sub> | <sub>10</sub> | <sub>5</sub> | <sub>±65504</sub> | <sub>312</sub> | <sub>General compute, high precision</sub> |
+| <sub>FP8 (E4M3)</sub> | <sub>8</sub> | <sub>3</sub> | <sub>4</sub> | <sub>±448</sub> | <sub>624*</sub> | <sub>Non-critical matmul</sub> |
 
 *FP8 performance on H100
 
@@ -365,38 +365,38 @@ SRAM Usage: 48KB per SM       (Careful tile size selection)
 
 ### Core Technologies
 
-| **Technology** | **Version** | **Purpose**                | **Why Chosen**                                       |
+| <sub>**Technology**</sub> | <sub>**Version**</sub> | <sub>**Purpose**</sub> | <sub>**Why Chosen**</sub> |
 | -------------- | ----------- | -------------------------- | ---------------------------------------------------- |
-| **Python**     | 3.8+        | High-level interface       | Industry standard for ML, excellent ecosystem        |
-| **PyTorch**    | 2.0+        | Deep learning framework    | Best GPU support, dynamic graphs, strong community   |
-| **CUDA**       | 12.0+       | GPU kernel programming     | Direct hardware access, maximum performance          |
-| **C++**        | 17+         | Performance-critical code  | Zero-overhead abstractions, template metaprogramming |
-| **Cutlass**    | 3.x         | Optimized GEMM templates   | NVIDIA-optimized, tensor core support                |
-| **Triton**     | 2.x         | High-level GPU programming | Faster prototyping, automatic optimization           |
-| **pybind11**   | 2.11+       | Python-C++ bindings        | Clean API, automatic type conversion                 |
-| **pytest**     | 7.x+        | Testing framework          | Comprehensive, fixture support, parametrization      |
-| **NumPy**      | 1.23+       | Numerical reference        | CPU baseline, validation                             |
+| <sub>**Python**</sub> | <sub>3.8+</sub> | <sub>High-level interface</sub> | <sub>Industry standard for ML, excellent ecosystem</sub> |
+| <sub>**PyTorch**</sub> | <sub>2.0+</sub> | <sub>Deep learning framework</sub> | <sub>Best GPU support, dynamic graphs, strong community</sub> |
+| <sub>**CUDA**</sub> | <sub>12.0+</sub> | <sub>GPU kernel programming</sub> | <sub>Direct hardware access, maximum performance</sub> |
+| <sub>**C++**</sub> | <sub>17+</sub> | <sub>Performance-critical code</sub> | <sub>Zero-overhead abstractions, template metaprogramming</sub> |
+| <sub>**Cutlass**</sub> | <sub>3.x</sub> | <sub>Optimized GEMM templates</sub> | <sub>NVIDIA-optimized, tensor core support</sub> |
+| <sub>**Triton**</sub> | <sub>2.x</sub> | <sub>High-level GPU programming</sub> | <sub>Faster prototyping, automatic optimization</sub> |
+| <sub>**pybind11**</sub> | <sub>2.11+</sub> | <sub>Python-C++ bindings</sub> | <sub>Clean API, automatic type conversion</sub> |
+| <sub>**pytest**</sub> | <sub>7.x+</sub> | <sub>Testing framework</sub> | <sub>Comprehensive, fixture support, parametrization</sub> |
+| <sub>**NumPy**</sub> | <sub>1.23+</sub> | <sub>Numerical reference</sub> | <sub>CPU baseline, validation</sub> |
 
 ### Development Tools
 
-| **Tool**             | **Purpose**            | **Why Chosen**                             |
+| <sub>**Tool**</sub> | <sub>**Purpose**</sub> | <sub>**Why Chosen**</sub> |
 | -------------------- | ---------------------- | ------------------------------------------ |
-| **NVIDIA Nsight**    | GPU profiling          | Official NVIDIA profiler, detailed metrics |
-| **PyTorch Profiler** | Python-level profiling | Integration with PyTorch, timeline view    |
-| **Docker**           | Containerization       | Reproducible environment, CUDA isolation   |
-| **Black**            | Code formatting        | Consistent style, automatic                |
-| **pylint**           | Linting                | Code quality, style enforcement            |
-| **mypy**             | Type checking          | Catch type errors early                    |
+| <sub>**NVIDIA Nsight**</sub> | <sub>GPU profiling</sub> | <sub>Official NVIDIA profiler, detailed metrics</sub> |
+| <sub>**PyTorch Profiler**</sub> | <sub>Python-level profiling</sub> | <sub>Integration with PyTorch, timeline view</sub> |
+| <sub>**Docker**</sub> | <sub>Containerization</sub> | <sub>Reproducible environment, CUDA isolation</sub> |
+| <sub>**Black**</sub> | <sub>Code formatting</sub> | <sub>Consistent style, automatic</sub> |
+| <sub>**pylint**</sub> | <sub>Linting</sub> | <sub>Code quality, style enforcement</sub> |
+| <sub>**mypy**</sub> | <sub>Type checking</sub> | <sub>Catch type errors early</sub> |
 
 ### Hardware Requirements
 
-| **Component**    | **Minimum** | **Recommended**  | **Rationale**                     |
+| <sub>**Component**</sub> | <sub>**Minimum**</sub> | <sub>**Recommended**</sub> | <sub>**Rationale**</sub> |
 | ---------------- | ----------- | ---------------- | --------------------------------- |
-| **GPU**          | A100 40GB   | A100 80GB / H100 | Tensor cores, FP8 support (H100)  |
-| **CUDA Compute** | 8.0 (A100)  | 9.0 (H100)       | Required for latest features      |
-| **VRAM**         | 40GB        | 80GB             | Large batch sizes, long sequences |
-| **CPU RAM**      | 64GB        | 128GB            | Data loading, preprocessing       |
-| **Storage**      | 500GB SSD   | 1TB NVMe         | Fast data loading, checkpoints    |
+| <sub>**GPU**</sub> | <sub>A100 40GB</sub> | <sub>A100 80GB / H100</sub> | <sub>Tensor cores, FP8 support (H100)</sub> |
+| <sub>**CUDA Compute**</sub> | <sub>8.0 (A100)</sub> | <sub>9.0 (H100)</sub> | <sub>Required for latest features</sub> |
+| <sub>**VRAM**</sub> | <sub>40GB</sub> | <sub>80GB</sub> | <sub>Large batch sizes, long sequences</sub> |
+| <sub>**CPU RAM**</sub> | <sub>64GB</sub> | <sub>128GB</sub> | <sub>Data loading, preprocessing</sub> |
+| <sub>**Storage**</sub> | <sub>500GB SSD</sub> | <sub>1TB NVMe</sub> | <sub>Fast data loading, checkpoints</sub> |
 
 ---
 
@@ -404,13 +404,13 @@ SRAM Usage: 48KB per SM       (Careful tile size selection)
 
 ### Benchmark Comparisons
 
-| **Metric**               | **PyTorch SDPA** | **FlashAttention v2** | **AdaAttn (Expected)** | **Improvement**       |
+| <sub>**Metric**</sub> | <sub>**PyTorch SDPA**</sub> | <sub>**FlashAttention v2**</sub> | <sub>**AdaAttn (Expected)**</sub> | <sub>**Improvement**</sub> |
 | ------------------------ | ---------------- | --------------------- | ---------------------- | --------------------- |
-| **Peak Memory (8K seq)** | 24.5 GB          | 8.2 GB                | **5.8 GB**             | **1.4x vs FA2**       |
-| **Throughput (tok/s)**   | 1,240            | 3,850                 | **5,200**              | **1.35x vs FA2**      |
-| **Latency (ms/iter)**    | 125              | 42                    | **29**                 | **1.45x vs FA2**      |
-| **FP16 Accuracy (PPL)**  | 12.45            | 12.47                 | **12.48**              | **0.08% degradation** |
-| **GPU Utilization**      | 58%              | 78%                   | **87%**                | **+9 pp vs FA2**      |
+| <sub>**Peak Memory (8K seq)**</sub> | <sub>24.5 GB</sub> | <sub>8.2 GB</sub> | <sub>**5.8 GB**</sub> | <sub>**1.4x vs FA2**</sub> |
+| <sub>**Throughput (tok/s)**</sub> | <sub>1,240</sub> | <sub>3,850</sub> | <sub>**5,200**</sub> | <sub>**1.35x vs FA2**</sub> |
+| <sub>**Latency (ms/iter)**</sub> | <sub>125</sub> | <sub>42</sub> | <sub>**29**</sub> | <sub>**1.45x vs FA2**</sub> |
+| <sub>**FP16 Accuracy (PPL)**</sub> | <sub>12.45</sub> | <sub>12.47</sub> | <sub>**12.48**</sub> | <sub>**0.08% degradation**</sub> |
+| <sub>**GPU Utilization**</sub> | <sub>58%</sub> | <sub>78%</sub> | <sub>**87%**</sub> | <sub>**+9 pp vs FA2**</sub> |
 
 *Benchmarks: GPT-2 Medium, batch=16, seq_len=8192, A100 80GB*
 
